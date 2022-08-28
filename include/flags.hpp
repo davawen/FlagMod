@@ -53,7 +53,7 @@ class Flags {
 	std::vector<std::string> args;
 	Help help;
 
-	/// Base case for `flag_present`
+	/// Base case for `option_present`
 	std::pair<std::nullptr_t, size_t> option_present(std::string_view) {
 		return { nullptr, 0 };
 	}
@@ -66,19 +66,20 @@ class Flags {
 
 	/// @returns { nullptr, _ } if flag isn't detected, else returns a pointer to the found flag's string value and the position of the character right after the flag in the string
 	template <typename T, bool R, typename ... Ts>
-	std::pair<std::optional<std::string_view> *, size_t> option_present(std::string_view str, Option<T, R> &flag, Ts & ... flags) {
-		if(str.starts_with("--" + flag.name)) {
+	std::pair<std::optional<std::string_view> *, size_t> option_present(const std::string_view str_, Option<T, R> &flag, Ts & ... flags) {
+		std::string_view str = str_;
+		if(str.starts_with("--") && (str.remove_prefix(str.find_first_not_of('-')), (str == flag.name))) {
 			return { &flag.value, flag.name.size() + 2 };
 		}
-		else if(flag.short_name.has_value() && str.starts_with(std::string("-") + *flag.short_name)) {
+		else if(flag.short_name.has_value() && str.starts_with('-') && (str.remove_prefix(1), (str == *flag.short_name))) {
 			return { &flag.value, 2 };
 		}
 		else {
-			return option_present(str, flags...); // Calls base case if no flag remain
+			return option_present(str_, flags...); // Calls base case if no flag remain
 		}
 	}
 
-	/// Base case for `switch_present`
+	/// Base case for `flag_present`
 	bool flag_present(std::string_view) {
 		return false;
 	}
@@ -92,16 +93,19 @@ class Flags {
 	/// Turns on switches present in the given string
 	/// @return wether at least one switch was present
 	template <typename ... Ts>
-	bool flag_present(std::string_view str, Flag &s, Ts & ... flags) {
-		if(
-			str.starts_with("--" + s.name) ||
-			(s.short_name.has_value() && str.starts_with('-') && str.find(*s.short_name) != std::string::npos)
-		) {
+	bool flag_present(const std::string_view str_, Flag &s, Ts & ... flags) {
+		std::string_view str = str_;
+		// If string starts with multiple dashes, removing the prefix disallows a match with `short_name`
+		if(str.starts_with("--") && (str.remove_prefix(str.find_first_not_of('-')), (str == s.name))) {
 			s.value = true;
-			return flag_present(str, flags...) || true;
+			return true;
+		}
+		else if( s.short_name.has_value() && str.starts_with('-') && str.find(*s.short_name) != std::string::npos ) {
+			s.value = true;
+			return flag_present(str_, flags...) || true;
 		}
 		else {
-			return flag_present(str, flags...);
+			return flag_present(str_, flags...);
 		}
 	}
 
@@ -132,18 +136,18 @@ class Flags {
 	typename Option<T, R>::out parse_flag(const Option<T, R> &flag) {
 		if constexpr(R) {
 			if(!flag.value.has_value() && !flag.default_value.has_value()) throw RequiredFlagNotGiven(fmt::format("option --{} requires a value but wasn't given one\n{}\n", flag.name, help.format_flag_help(flag.name)));
-			else if(flag.default_value.has_value()) return *flag.default_value;
-			// fallthrough on else
+			else if(!flag.value.has_value() && flag.default_value.has_value()) return *flag.default_value;
+			// fallthrough to try/catch
 		}
 		else {
 			if(!flag.value.has_value()) return nullopt;
-			// fallthrough on else
+			// fallthrough to try/catch
 		}
 		try {
 			return lexical_conversion<T>(*flag.value);
 		} 
 		catch(InvalidArgument &e) {
-			throw InvalidArgument(fmt::format("{}\ncouldn't parse input of --{}, was given {}\n{}\n", e.msg, flag.name, *flag.value, help.format_flag_help(flag.name))); // Show invalid input instead of failing silently
+			throw InvalidArgument(fmt::format("{}\ncouldn't parse input \"{}\" given to --{}\n{}\n", e.msg, *flag.value, flag.name, help.format_flag_help(flag.name))); // Show invalid input instead of failing silently
 		}
 	}
 
@@ -224,44 +228,54 @@ public:
 		help.print_help();
 	}
 
-	template <lexically_convertible T>
-	Option<T, false> option(const std::string &name, const std::string &help) {
-		this->help.option_help.push_back(Help::OptionHelp { name, nullopt, help, nullopt });
-		return Option<T, false> { name, nullopt, nullopt, nullopt };
-	}
-	template <lexically_convertible T>
-	Option<T, false> option(const std::string &name, char short_name, const std::string &help) {
-		this->help.option_help.push_back(Help::OptionHelp { name, short_name, help, nullopt });
-		return Option<T, false> { name, short_name, nullopt, nullopt };
-	}
-	template <lexically_convertible T>
-	Option<T, true> option_required(const std::string &name, const std::string &help, const std::optional<T> default_value = nullopt) {
-		if constexpr(stringifiable<T>) {
-			this->help.option_help.push_back(Help::OptionHelp { name, nullopt, help, default_value.has_value() ? std::optional{std::to_string(*default_value)} : nullopt });
+	auto get_flag_names(const std::string &schema) {
+		std::pair<std::optional<std::string>, std::optional<char>> out{nullopt, nullopt};
+		size_t pos = schema.find(',');
+		if(pos == std::string::npos) {
+			if(schema.length() == 1) out.second = schema[0];
+			else out.first = schema;
 		}
 		else {
-			this->help.option_help.push_back(Help::OptionHelp { name, nullopt, help, default_value.has_value() ? std::optional{"yes"} : nullopt });
+			std::pair<std::string, std::string> split{ schema.substr(0, pos), schema.substr(pos + 1) };
+
+			if(split.first.length() == 1) {
+				out.first = split.second;
+				out.second = split.first[0];
+			}
+			else if(split.second.length() == 1) {
+				out.first = split.first;
+				out.second = split.second[0];
+			}
 		}
-		return Option<T, true> { name, nullopt, default_value, nullopt };
-	}
-	template <lexically_convertible T>
-	Option<T, true> option_required(const std::string &name, char short_name, const std::string &help, const std::optional<T> default_value = nullopt) {
-		if constexpr(stringifiable<T>) {
-			this->help.option_help.push_back(Help::OptionHelp { name, short_name, help, default_value.has_value() ? std::optional{std::to_string(*default_value)} : nullopt });
-		}
-		else {
-			this->help.option_help.push_back(Help::OptionHelp { name, short_name, help, default_value.has_value() ? std::optional{"yes"} : nullopt });
-		}
-		return Option<T, true> { name, short_name, default_value, nullopt };
+
+		return out;
 	}
 
-	Flag flag(const std::string &name, const std::string &help) {
-		this->help.flag_help.push_back(Help::FlagHelp { name, nullopt, help });
-		return Flag { name, nullopt, false };
+	template <lexically_convertible T>
+	Option<T, false> option(const std::string &schema, const std::string &help) {
+		auto [name, short_name] = get_flag_names(schema);
+
+		this->help.option_help.push_back(Help::OptionHelp { *name, short_name, help, nullopt });
+		return Option<T, false> { *name, short_name, nullopt, nullopt };
 	}
-	Flag flag(const std::string &name, char short_name, const std::string &help) {
-		this->help.flag_help.push_back(Help::FlagHelp { name, short_name, help });
-		return Flag { name, short_name, false };
+	template <lexically_convertible T>
+	Option<T, true> option_required(const std::string &schema, const std::string &help, const std::optional<T> default_value = nullopt) {
+		auto [name, short_name] = get_flag_names(schema);
+
+		if constexpr(stringifiable<T>) {
+			this->help.option_help.push_back(Help::OptionHelp { *name, short_name, help, default_value.has_value() ? std::optional{std::to_string(*default_value)} : nullopt });
+		}
+		else {
+			this->help.option_help.push_back(Help::OptionHelp { *name, short_name, help, default_value.has_value() ? std::optional{"yes"} : nullopt });
+		}
+		return Option<T, true> { *name, short_name, default_value, nullopt };
+	}
+
+	Flag flag(const std::string &schema, const std::string &help) {
+		auto [name, short_name] = get_flag_names(schema);
+
+		this->help.flag_help.push_back(Help::FlagHelp { *name, short_name, help });
+		return Flag { *name, short_name, false };
 	}
 
 	template <lexically_convertible T>
