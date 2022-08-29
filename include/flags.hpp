@@ -23,7 +23,7 @@ struct Option {
 	using type = T;
 	using out = std::conditional_t<Required, T, std::optional<T>>;
 
-	std::string name;
+	std::optional<std::string> name;
 	std::optional<char> short_name;
 
 	std::optional<T> default_value;
@@ -31,7 +31,7 @@ struct Option {
 };
 
 struct Flag {
-	std::string name;
+	std::optional<std::string> name;
 	std::optional<char> short_name;
 
 	bool value;
@@ -52,6 +52,33 @@ concept stringifiable = requires(T x) {
 class Flags {
 	std::vector<std::string> args;
 	Help help;
+
+	auto get_flag_names(const std::string &schema) {
+		std::pair<std::optional<std::string>, std::optional<char>> out{nullopt, nullopt};
+		size_t pos = schema.find(',');
+		if(pos == std::string::npos) {
+			if(schema.length() == 0) throw InvalidFlagSpec("flag schema is empty");
+			else if(schema.length() == 1) out.second = schema[0];
+			else out.first = schema;
+		}
+		else {
+			std::pair<std::string, std::string> split{ schema.substr(0, pos), schema.substr(pos + 1) };
+
+			if(split.first.length() == 1 && split.second.length() == 1) throw InvalidFlagSpec("flag schema can't have two short names");
+			else if(split.first.length() != 1 && split.second.length() != 1) throw InvalidFlagSpec("flag schema can't have two long names");
+			else if(split.first.length() == 1) {
+				out.first = split.second;
+				out.second = split.first[0];
+			}
+			else if(split.second.length() == 1) {
+				out.first = split.first;
+				out.second = split.second[0];
+			}
+			else throw InvalidFlagSpec("flag schema contains a trailing comma");
+		}
+
+		return out;
+	}
 
 	/// Base case for `option_present`
 	std::pair<std::nullptr_t, size_t> option_present(std::string_view) {
@@ -228,54 +255,31 @@ public:
 		help.print_help();
 	}
 
-	auto get_flag_names(const std::string &schema) {
-		std::pair<std::optional<std::string>, std::optional<char>> out{nullopt, nullopt};
-		size_t pos = schema.find(',');
-		if(pos == std::string::npos) {
-			if(schema.length() == 1) out.second = schema[0];
-			else out.first = schema;
-		}
-		else {
-			std::pair<std::string, std::string> split{ schema.substr(0, pos), schema.substr(pos + 1) };
-
-			if(split.first.length() == 1) {
-				out.first = split.second;
-				out.second = split.first[0];
-			}
-			else if(split.second.length() == 1) {
-				out.first = split.first;
-				out.second = split.second[0];
-			}
-		}
-
-		return out;
-	}
-
 	template <lexically_convertible T>
 	Option<T, false> option(const std::string &schema, const std::string &help) {
 		auto [name, short_name] = get_flag_names(schema);
 
-		this->help.option_help.push_back(Help::OptionHelp { *name, short_name, help, nullopt });
-		return Option<T, false> { *name, short_name, nullopt, nullopt };
+		this->help.option_help.push_back(Help::OptionHelp { name, short_name, help, nullopt });
+		return Option<T, false> { name, short_name, nullopt, nullopt };
 	}
 	template <lexically_convertible T>
 	Option<T, true> option_required(const std::string &schema, const std::string &help, const std::optional<T> default_value = nullopt) {
 		auto [name, short_name] = get_flag_names(schema);
 
 		if constexpr(stringifiable<T>) {
-			this->help.option_help.push_back(Help::OptionHelp { *name, short_name, help, default_value.has_value() ? std::optional{std::to_string(*default_value)} : nullopt });
+			this->help.option_help.push_back(Help::OptionHelp { name, short_name, help, default_value.has_value() ? std::optional{std::to_string(*default_value)} : nullopt });
 		}
 		else {
-			this->help.option_help.push_back(Help::OptionHelp { *name, short_name, help, default_value.has_value() ? std::optional{"yes"} : nullopt });
+			this->help.option_help.push_back(Help::OptionHelp { name, short_name, help, default_value.has_value() ? std::optional{"yes"} : nullopt });
 		}
-		return Option<T, true> { *name, short_name, default_value, nullopt };
+		return Option<T, true> { name, short_name, default_value, nullopt };
 	}
 
 	Flag flag(const std::string &schema, const std::string &help) {
 		auto [name, short_name] = get_flag_names(schema);
 
-		this->help.flag_help.push_back(Help::FlagHelp { *name, short_name, help });
-		return Flag { *name, short_name, false };
+		this->help.flag_help.push_back(Help::FlagHelp { name, short_name, help });
+		return Flag { name, short_name, false };
 	}
 
 	template <lexically_convertible T>

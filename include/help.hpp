@@ -6,32 +6,80 @@
 #include <algorithm>
 #include <numeric>
 #include <ranges>
+#include <cstring>
 
 #include "fmt/core.h"
+#include "fmt/format.h"
+
+namespace fmt {
+
+template <typename T>
+struct formatter<std::optional<T>> {
+	std::string_view underlying_fmt;
+	std::string_view or_else;
+
+	constexpr auto parse(format_parse_context& ctx) -> decltype(ctx.begin()) {
+		// {:<if present{}><if not present>}
+		auto it = ctx.begin(), end = ctx.end();
+		auto get_marker = [&it, end]() constexpr -> std::string_view {
+			if(it == end || *it != '<') return std::string_view(nullptr, 0); // no match
+			auto start = ++it;
+
+			while(it != end && (*it++ != '>'));
+			if(it == end) throw fmt::format_error("invalid format, unfinished range");
+
+			return std::string_view(start, it - 1);
+		};
+
+		underlying_fmt = "{}";
+		or_else = "";
+
+		auto first = get_marker();
+		if(first.data() != nullptr) underlying_fmt = first;
+
+		auto second = get_marker();
+		if(second.data() != nullptr) or_else = second;
+
+		// Check if reached the end of the range:
+		if (it != end && *it != '}') throw fmt::format_error("invalid format, no end bracket");
+		return it;
+	}
+
+	template <typename FormatContext>
+	auto format(const std::optional<T>& p, FormatContext& ctx) const -> decltype(ctx.out()) {
+		if(p.has_value()) {
+			return vformat_to(ctx.out(), underlying_fmt, format_arg_store<FormatContext, T>{*p});
+		}
+		else {
+			return format_to(ctx.out(), "{}", or_else);
+		}
+	}
+};
+}
 
 namespace FlagMod {
 struct Help {
 	struct OptionHelp {
-		std::string name;
+		std::optional<std::string> name;
 		std::optional<char> short_name;
 		std::string help;
 		std::optional<std::string> default_value;
 
 		std::string format_prefix() const {
-			return fmt::format("{} --{}", short_name.has_value() ? fmt::format("-{},", *short_name) : "   ", name);
+			return fmt::format("{:<-{},><    >} {:<--{}>}", short_name, name);
 		}
 		std::string format_help() const {
-			return fmt::format("{} {}", help, default_value.has_value() ? "(default: " + *default_value + ')' : "");
+			return fmt::format("{} {:<(default: {})>}", help, default_value);
 		}
 	};
 
 	struct FlagHelp {
-		std::string name;
+		std::optional<std::string> name;
 		std::optional<char> short_name;
 		std::string help;
 
 		std::string format_prefix() const {
-			return fmt::format("{} --{}", short_name.has_value() ? fmt::format("-{},", *short_name) : "   ", name);
+			return fmt::format("{:<-{},><    >} {:<--{}>}", short_name, name);
 		}
 		std::string format_help() const {
 			return help;

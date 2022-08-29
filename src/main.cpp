@@ -1,9 +1,10 @@
 #include <iostream>
+#include <concepts>
 
 #include "flags.hpp"
 
 #ifndef VERSION
-#define VERSION "0.0.0"
+#define VERSION "1.0.0"
 #endif
 
 int main(int argc, char** argv)
@@ -12,7 +13,7 @@ int main(int argc, char** argv)
 	
 	auto flag_help = flags.flag("h,help", "Show this help and exit");
 	auto flag_test = flags.flag("t,test", "Test option");
-	auto flag_testb = flags.flag("testb", "Test option B");
+	auto flag_testb = flags.flag("b", "Test option B");
 
 	auto [help] = flags.parse(flag_help);
 	if(help) {

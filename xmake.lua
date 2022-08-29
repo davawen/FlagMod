@@ -10,7 +10,6 @@ target("FlagMod")
 
 target("test")
 	set_kind("binary")
-	add_defines("VERSION=\"1.0.0\"")
 	add_includedirs("include")
 	add_files("src/*.cpp")
 	add_packages("fmt")
