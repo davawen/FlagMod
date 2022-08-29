@@ -1,12 +1,12 @@
 #pragma once
 
-#include <iostream>
 #include <string>
 #include <vector>
 #include <optional>
 #include <tuple>
 #include <algorithm>
 #include <numeric>
+#include <type_traits>
 #include <ranges>
 
 #include "fmt/core.h"
@@ -26,8 +26,12 @@ struct Option {
 	std::optional<std::string> name;
 	std::optional<char> short_name;
 
-	std::optional<T> default_value;
+	std::optional<std::string> default_value;
 	std::optional<std::string_view> value;
+
+	std::string id() const {
+		return fmt::format("{}{}", short_name, name);
+	}
 };
 
 struct Flag {
@@ -35,6 +39,10 @@ struct Flag {
 	std::optional<char> short_name;
 
 	bool value;
+
+	std::string id() const {
+		return fmt::format("{}{}", short_name, name);
+	}
 };
 
 template <typename T>
@@ -87,22 +95,22 @@ class Flags {
 
 	/// Ignore non-flag arguments
 	template <typename T, typename ... Ts>
-	auto option_present(std::string_view str, T &, Ts & ... flags) {
-		return option_present(str, flags...);
+	auto option_present(std::string_view str, T &, Ts & ... options) {
+		return option_present(str, options...);
 	}
 
 	/// @returns { nullptr, _ } if flag isn't detected, else returns a pointer to the found flag's string value and the position of the character right after the flag in the string
 	template <typename T, bool R, typename ... Ts>
-	std::pair<std::optional<std::string_view> *, size_t> option_present(const std::string_view str_, Option<T, R> &flag, Ts & ... flags) {
+	std::pair<std::optional<std::string_view> *, size_t> option_present(const std::string_view str_, Option<T, R> &option, Ts & ... options) {
 		std::string_view str = str_;
-		if(str.starts_with("--") && (str.remove_prefix(str.find_first_not_of('-')), (str == flag.name))) {
-			return { &flag.value, flag.name.size() + 2 };
+		if(str.starts_with("--") && (str.remove_prefix(str.find_first_not_of('-')), (option.name.has_value() && str == *option.name))) {
+			return { &option.value, option.name->size() + 2 };
 		}
-		else if(flag.short_name.has_value() && str.starts_with('-') && (str.remove_prefix(1), (str == *flag.short_name))) {
-			return { &flag.value, 2 };
+		else if(option.short_name.has_value() && str.starts_with('-') && (str.remove_prefix(1), (str.back() == *option.short_name))) { // allows for flags with options at the end
+			return { &option.value, 2 };
 		}
 		else {
-			return option_present(str_, flags...); // Calls base case if no flag remain
+			return option_present(str_, options...); // Calls base case if no flag remain
 		}
 	}
 
@@ -123,7 +131,7 @@ class Flags {
 	bool flag_present(const std::string_view str_, Flag &s, Ts & ... flags) {
 		std::string_view str = str_;
 		// If string starts with multiple dashes, removing the prefix disallows a match with `short_name`
-		if(str.starts_with("--") && (str.remove_prefix(str.find_first_not_of('-')), (str == s.name))) {
+		if(str.starts_with("--") && (str.remove_prefix(str.find_first_not_of('-')), (s.name.has_value() && str == *s.name))) {
 			s.value = true;
 			return true;
 		}
@@ -160,10 +168,10 @@ class Flags {
 
 	/// @returns T if the flag is required or optional<T> if it isn't
 	template <typename T, bool R>
-	typename Option<T, R>::out parse_flag(const Option<T, R> &flag) {
+	typename Option<T, R>::out parse_flag(Option<T, R> &flag) {
 		if constexpr(R) {
-			if(!flag.value.has_value() && !flag.default_value.has_value()) throw RequiredFlagNotGiven(fmt::format("option --{} requires a value but wasn't given one\n{}\n", flag.name, help.format_flag_help(flag.name)));
-			else if(!flag.value.has_value() && flag.default_value.has_value()) return *flag.default_value;
+			if(!flag.value.has_value() && !flag.default_value.has_value()) throw RequiredFlagNotGiven(fmt::format("option requires a value but wasn't given one\n{}\n", help.format_flag_help(flag.id())));
+			else if(!flag.value.has_value() && flag.default_value.has_value()) flag.value = std::string_view(*flag.default_value);
 			// fallthrough to try/catch
 		}
 		else {
@@ -174,7 +182,7 @@ class Flags {
 			return lexical_conversion<T>(*flag.value);
 		} 
 		catch(InvalidArgument &e) {
-			throw InvalidArgument(fmt::format("{}\ncouldn't parse input \"{}\" given to --{}\n{}\n", e.msg, *flag.value, flag.name, help.format_flag_help(flag.name))); // Show invalid input instead of failing silently
+			throw InvalidArgument(fmt::format("{}\ncouldn't parse input \"{}\" given to option\n{}\n", e.msg, *flag.value, flag.name, help.format_flag_help(flag.id()))); // Show invalid input instead of failing silently
 		}
 	}
 
@@ -191,8 +199,6 @@ public:
 		for(int i = 1; i < argc; i++) {
 			args.push_back(argv[i]);
 		}
-
-		help.executable = argv[0];
 	}
 
 	/// Takes a parameter pack of FlagMod::Flag, FlagMod::Switch and FlagMod::Positional
@@ -255,31 +261,53 @@ public:
 		help.print_help();
 	}
 
+	void check_duplicate(const std::ranges::input_range auto &r, const std::optional<std::string> &name, const std::optional<char> &short_name) {
+		auto result = std::ranges::find_if(r, [&name, &short_name](const auto &p){
+			auto &v = p.second;
+			return (v.name.has_value() && name.has_value() && *v.name == *name) || (v.short_name.has_value() && short_name.has_value() && *v.short_name == *short_name);
+		});
+
+		if(result != r.end()) throw InvalidFlagSpec(fmt::format("duplicate flags: {:<-{}, ><>}{:<--{}>}", short_name, name));
+	}
+
 	template <lexically_convertible T>
 	Option<T, false> option(const std::string &schema, const std::string &help) {
 		auto [name, short_name] = get_flag_names(schema);
 
-		this->help.option_help.push_back(Help::OptionHelp { name, short_name, help, nullopt });
-		return Option<T, false> { name, short_name, nullopt, nullopt };
+		check_duplicate(this->help.option_help, name, short_name);
+		auto out = Option<T, false> { name, short_name, nullopt, nullopt };
+		this->help.option_help[out.id()] = Help::OptionHelp { name, short_name, help, nullopt };
+		return out;
 	}
 	template <lexically_convertible T>
-	Option<T, true> option_required(const std::string &schema, const std::string &help, const std::optional<T> default_value = nullopt) {
+	Option<T, true> option_required(const std::string &schema, const std::string &help, const std::optional<std::string> default_value = nullopt) {
 		auto [name, short_name] = get_flag_names(schema);
 
-		if constexpr(stringifiable<T>) {
-			this->help.option_help.push_back(Help::OptionHelp { name, short_name, help, default_value.has_value() ? std::optional{std::to_string(*default_value)} : nullopt });
+		check_duplicate(this->help.option_help, name, short_name);
+		auto in = Help::OptionHelp { name, short_name, help, default_value };
+		if(default_value.has_value()) {
+			try {
+				lexical_conversion<T>(*default_value);
+			}
+			catch(InvalidArgument &e) {
+				throw InvalidFlagSpec(fmt::format("default argument of {} can't be parsed properly\n{}", in.format_prefix(), e.msg));
+			}
 		}
-		else {
-			this->help.option_help.push_back(Help::OptionHelp { name, short_name, help, default_value.has_value() ? std::optional{"yes"} : nullopt });
-		}
-		return Option<T, true> { name, short_name, default_value, nullopt };
+
+		auto out = Option<T, true> { name, short_name, default_value, nullopt };
+		this->help.option_help[out.id()] = std::move(in);
+
+		return out;
 	}
 
 	Flag flag(const std::string &schema, const std::string &help) {
 		auto [name, short_name] = get_flag_names(schema);
 
-		this->help.flag_help.push_back(Help::FlagHelp { name, short_name, help });
-		return Flag { name, short_name, false };
+		check_duplicate(this->help.flag_help, name, short_name);
+
+		auto out = Flag { name, short_name, false };
+		this->help.flag_help.insert_or_assign(out.id(), Help::FlagHelp { name, short_name, help });
+		return out;
 	}
 
 	template <lexically_convertible T>

@@ -17,8 +17,8 @@ namespace FlagMod {
 	// template <typename T>
 	// T lexical_conversion(std::string_view input, T *);
 
-	inline std::string lexical_conversion(std::string_view input, std::string *) { return std::string(input);}
-	inline char lexical_conversion(std::string_view input, char *) { 
+	inline constexpr std::string lexical_conversion(std::string_view input, std::string *) { return std::string(input);}
+	inline constexpr char lexical_conversion(std::string_view input, char *) { 
 		if(input.length() == 0) throw InvalidArgument("");
 		return input[0]; 
 	}
@@ -47,7 +47,7 @@ namespace FlagMod {
 
 #ifndef DEFINE_NUMERIC_STR_TO_VALUE
 	#define DEFINE_NUMERIC_STR_TO_VALUE(type) \
-		inline type lexical_conversion(std::string_view input, type *) { \
+		inline /*constexpr*/ type lexical_conversion(std::string_view input, type *) { \
 			type out; \
 			auto [__, ec] = std::from_chars(input.data(), input.data() + input.size(), out); \
 			if(ec == std::errc::invalid_argument) throw InvalidArgument("invalid input for numeric type " #type ": not a number"); \
@@ -70,7 +70,7 @@ namespace FlagMod {
 	}
 
 template <typename T>
-T lexical_conversion(std::string_view input) {
+T constexpr lexical_conversion(std::string_view input) {
 	return detail::lexical_conversion(input, static_cast<T *>(nullptr));
 }
 

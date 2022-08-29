@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include <optional>
 #include <algorithm>
 #include <numeric>
@@ -90,51 +91,55 @@ struct Help {
 		std::string label;
 	};
 
-	std::string name, version, executable;
-	std::vector<OptionHelp> option_help;
-	std::vector<FlagHelp> flag_help;
+	std::string name, version;
+	std::unordered_map<std::string, OptionHelp> option_help;
+	std::unordered_map<std::string, FlagHelp> flag_help;
 	std::vector<PositionalHelp> positional_help;
 
-	std::string format_flag_help(const std::string &name) {
-		namespace ranges = std::ranges;
+	bool flag_exists(const std::string &id) {
+		if(auto it = option_help.find(id); it != option_help.end()) return true;
+		if(auto it = flag_help.find(id); it != flag_help.end()) return true;
 
-		auto matching = [&name](const auto &x){ return x.name == name; };
+		return false;
+	}
+
+	std::string format_flag_help(const std::string &id) {
 		auto format = [](const auto &x) {
 			return fmt::format("    {} {}\n", x.format_prefix(), x.format_help());
 		};
 
-		if(auto it = ranges::find_if(option_help, matching); it != option_help.end()) {
-			return format(*it);
+		if(auto it = option_help.find(id); it != option_help.end()) {
+			return format(it->second);
 		}
-		else if(auto it = ranges::find_if(flag_help, matching); it != flag_help.end()) {
-			return format(*it);
+		else if(auto it = flag_help.find(id); it != flag_help.end()) {
+			return format(it->second);
 		}
 		return "";
 	}
 
 	template <typename T>
-	std::string format_flags(const std::vector<T> &v) {
+	std::string format_flags(const std::unordered_map<std::string, T> &v) {
 		namespace ranges = std::ranges;
 
 		size_t max_length = 0;
-		std::vector<std::pair<std::string, const T *>> flags;
+		std::vector<std::pair<std::string, std::string>> flags;
 		ranges::transform(v, std::back_inserter(flags),
-			[&max_length](const T &x) {
-				auto str = fmt::format("    {}", x.format_prefix());
+			[&max_length](const std::pair<std::string, T> &p) {
+				auto str = fmt::format("    {}", p.second.format_prefix());
 				max_length = std::max(max_length, str.length());
-				return std::pair{ str, &x };
+				return std::pair{ str, p.second.format_help() };
 			}
 		);
 
 		return std::accumulate(flags.cbegin(), flags.cend(), std::string("\n"), 
-			[max_length](std::string a, const std::pair<const std::string, const T *> &b) {
-				return std::move(a) + std::move(b.first) + fmt::format("{} {}\n", std::string(max_length - b.first.length(), ' '), b.second->format_help());
+			[max_length](std::string a, const std::pair<std::string, std::string> &b) {
+				return std::move(a) + std::move(b.first) + fmt::format("{} {}\n", std::string(max_length - b.first.length(), ' '), b.second);
 			}
 		);
 	}
 
 	void print_usage(FILE *output) {
-		fmt::print(output, "Usage: {} [options...]{}\n\n", executable, std::accumulate(positional_help.begin(), positional_help.end(), std::string(""), 
+		fmt::print(output, "Usage: {} [options...]{}\n\n", name, std::accumulate(positional_help.begin(), positional_help.end(), std::string(""), 
 			[](std::string a, PositionalHelp &b) {
 				return std::move(a) + fmt::format(" {{{}}}", b.label);
 			}

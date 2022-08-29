@@ -13,7 +13,7 @@ int main(int argc, char** argv)
 	
 	auto flag_help = flags.flag("h,help", "Show this help and exit");
 	auto flag_test = flags.flag("t,test", "Test option");
-	auto flag_testb = flags.flag("b", "Test option B");
+	auto flag_testb = flags.option_required<int>("b", "Test option B", "123");
 
 	auto [help] = flags.parse(flag_help);
 	if(help) {
@@ -25,7 +25,7 @@ int main(int argc, char** argv)
 	if(test) std::cout << "Test was given\n";
 	else std::cout << "Test wasn't given\n";
 
-	std::cout << std::boolalpha << testb << '\n';
+	std::cout << testb << '\n';
 
     return 0;
 }
