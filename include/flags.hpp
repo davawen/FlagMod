@@ -179,7 +179,7 @@ class Flags {
 			// fallthrough to try/catch
 		}
 		try {
-			return lexical_conversion<T>(*flag.value);
+			return lexical_conversion(*flag.value, lexical_type<T>{});
 		} 
 		catch(InvalidArgument &e) {
 			throw InvalidArgument(fmt::format("{}\ncouldn't parse input \"{}\" given to option\n{}\n", e.msg, *flag.value, flag.name, help.format_flag_help(flag.id()))); // Show invalid input instead of failing silently
@@ -189,7 +189,7 @@ class Flags {
 	template <typename T>
 	T parse_flag(const Positional<T> &p) {
 		std::optional<T> value;
-		if(p.value.has_value() && (value = lexical_conversion<T>(*p.value)).has_value()) return *value;
+		if(p.value.has_value() && (value = lexical_conversion(*p.value, lexical_type<T>{})).has_value()) return *value;
 
 		throw RequiredFlagNotGiven(fmt::format("argument {{{}}} not given", p.label));
 	}
@@ -287,7 +287,7 @@ public:
 		auto in = Help::OptionHelp { name, short_name, help, default_value };
 		if(default_value.has_value()) {
 			try {
-				lexical_conversion<T>(*default_value);
+				lexical_conversion(*default_value, lexical_type<T>{});
 			}
 			catch(InvalidArgument &e) {
 				throw InvalidFlagSpec(fmt::format("default argument of {} can't be parsed properly\n{}", in.format_prefix(), e.msg));

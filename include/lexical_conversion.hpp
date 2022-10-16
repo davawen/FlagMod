@@ -11,20 +11,24 @@
 #include "errors.hpp"
 
 namespace FlagMod {
-	namespace detail {
 
-	/// NOTE: Parameter T* will always be null, it is used for disambiguation when template specialization shits its pants (eg: with std::vector<T>)
-	// template <typename T>
-	// T lexical_conversion(std::string_view input, T *);
+	// Used in overload resolving (function specialization doesn't work with things such as vector)
+	template <typename T>
+	struct lexical_type{};
 
-	inline constexpr std::string lexical_conversion(std::string_view input, std::string *) { return std::string(input);}
-	inline constexpr char lexical_conversion(std::string_view input, char *) { 
+	template <typename T>
+	concept lexically_convertible = requires {
+		lexical_conversion(std::string_view{}, lexical_type<T>{});
+	};
+
+	inline constexpr std::string lexical_conversion(std::string_view input, lexical_type<std::string>) { return std::string(input);}
+	inline constexpr char lexical_conversion(std::string_view input, lexical_type<char>) { 
 		if(input.length() == 0) throw InvalidArgument("");
 		return input[0]; 
 	}
 
 	template <typename T>
-	inline std::vector<T> lexical_conversion(std::string_view input, std::vector<T> *) {
+	inline std::vector<T> lexical_conversion(std::string_view input, lexical_type<std::vector<T>>) {
 		std::vector<T> v;
 
 		size_t last_pos = 0;
@@ -47,10 +51,10 @@ namespace FlagMod {
 
 #ifndef DEFINE_NUMERIC_STR_TO_VALUE
 	#define DEFINE_NUMERIC_STR_TO_VALUE(type) \
-		inline /*constexpr*/ type lexical_conversion(std::string_view input, type *) { \
+		inline /*constexpr*/ type lexical_conversion(std::string_view input, lexical_type<type>) { \
 			type out; \
 			auto [__, ec] = std::from_chars(input.data(), input.data() + input.size(), out); \
-			if(ec == std::errc::invalid_argument) throw InvalidArgument("invalid input for numeric type " #type ": not a number"); \
+			if(ec == std::errc::invalid_argument) throw InvalidArgument(fmt::format("invalid input for numeric type " #type ": not a number ({})", input)); \
 			else if(ec == std::errc::result_out_of_range) throw InvalidArgument("input too big for numeric type " #type); \
 			else return out; \
 		}
@@ -67,16 +71,4 @@ namespace FlagMod {
 	DEFINE_NUMERIC_STR_TO_VALUE(long double)
 
 	#undef DEFINE_NUMERIC_STR_TO_VALUE
-	}
-
-template <typename T>
-T constexpr lexical_conversion(std::string_view input) {
-	return detail::lexical_conversion(input, static_cast<T *>(nullptr));
-}
-
-template <typename T>
-concept lexically_convertible = requires {
-	detail::lexical_conversion(std::string_view{}, static_cast<T*>(nullptr));
-};
-
 }
